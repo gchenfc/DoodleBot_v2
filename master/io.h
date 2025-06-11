@@ -18,7 +18,7 @@
 
 AsyncWebServer server(80);
 
-Metro io_timer(2000);
+Metro io_timer(15000);
 
 void recvMsg(uint8_t* data, size_t len);
 
@@ -44,7 +44,8 @@ void recvMsg(uint8_t* data, size_t len) {
   std::string_view input(reinterpret_cast<char*>(data), len);
 
   if (starts_with(input, "GCODE")) {
-    gcode_player.loadProgram(input.substr(5));
+    std::string_view remaining = input.substr(5);
+    gcode_player.loadProgram(remaining);
     return;
   }
 
@@ -92,6 +93,7 @@ bool parseLine(std::string_view line) {
     case 'R':
       estimator.reset();
       controller.reset();
+      gcode_player.reset();
       return true;
     case 'm':
       {
@@ -106,7 +108,6 @@ bool parseLine(std::string_view line) {
     case 'M':
       {
         Eigen::Vector2d xy;
-        WebSerial.write(reinterpret_cast<const uint8_t*>(line.data()), line.size());
         if (parseNumbers(line, xy(0), xy(1))) {
           WebSerial.printf("Calling move absolute on %.2f, %.2f\n", xy(0), xy(1));
           controller.setSetpoint(xy);
@@ -114,6 +115,15 @@ bool parseLine(std::string_view line) {
         }
         return false;
       }
+    case '>':
+      gcode_player.play();
+      return true;
+    case '|':
+      gcode_player.pause();
+      return true;
+    case 'p':
+      gcode_player.printProgram();
+      return true;
     case '?':
       estimator.print();
       controller.print();

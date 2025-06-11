@@ -7,6 +7,7 @@
 #include "constants.h"
 #include "estimator.h"
 #include "controller.h"
+#include "gcode_player.h"
 #include "Metro.h"
 
 Metro motor_timer(50);
@@ -44,6 +45,7 @@ void updateMotors() {
     const int64_t cur_stepper2 = stepper2.currentPosition();
 
     estimator.update(Eigen::Vector2d(cur_stepper1, cur_stepper2) * UNITS_PER_STEP);
+    gcode_player.update(estimator.state());
     if (!controller.done(estimator.state())) {
       Eigen::Vector2d dq = controller.getAction(estimator.state()) * STEPS_PER_UNIT;
       // estimator.print();
@@ -70,5 +72,5 @@ void applyDq(int64_t d1, int64_t d2) {
 }
 
 void movePenDown(bool down) {
-  servo_target = down ? 0 : 160;
+  servo_target = down ? 160 : 0;
 }

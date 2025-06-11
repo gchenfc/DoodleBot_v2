@@ -10,8 +10,9 @@
 void trimFront(std::string_view& sv);
 void trimBack(std::string_view& sv);
 void trim(std::string_view& sv);
+void trimComment(std::string_view& sv);
 template<typename T>
-bool starts_with(const std::string_view& sv, const std::string_view prefix);
+bool starts_with(const std::string_view sv, const std::string_view prefix);
 
 // Parses a float from a string view, advancing the view. Returns nullopt on failure.
 template<typename FloatingT>
@@ -44,8 +45,13 @@ void trim(std::string_view& sv) {
   trimFront(sv);
   trimBack(sv);
 }
+void trimComment(std::string_view& sv) {
+  auto semicolon_pos = sv.find(';');
+  if (semicolon_pos == std::string_view::npos) return;
+  sv.remove_suffix(sv.size() - semicolon_pos);
+}
 
-bool starts_with(const std::string_view& sv, const std::string_view prefix) {
+bool starts_with(const std::string_view sv, const std::string_view prefix) {
   return sv.size() >= prefix.size() && (sv.substr(0, prefix.size()) == prefix);
 }
 
@@ -130,8 +136,6 @@ bool parseNumbers(std::string_view& sv, T1& out1, Ts&... outs) {
 
   if (!val) return false;
 
-  WebSerial.println(F("Checkpoint 1"));
-
   // Parse remaining
   if constexpr (sizeof...(outs) > 0) {
     trimFront(sv);
@@ -141,11 +145,6 @@ bool parseNumbers(std::string_view& sv, T1& out1, Ts&... outs) {
     if (!parseNumbers(sv, outs...)) return false;
   } else {
     trim(sv);
-    WebSerial.printf("CHekpoint 2: %u\n", sv.size());
-    for (const auto& c : sv) {
-      WebSerial.printf("checkpoint 3: %d\n", c);
-    }
-    WebSerial.write(reinterpret_cast<const uint8_t*>(sv.data()), sv.size());
     if (!sv.empty()) return false;
   }
 

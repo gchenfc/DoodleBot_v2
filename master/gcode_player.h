@@ -4,6 +4,8 @@
 #include "gcode_parser.h"
 #include "motors.h"
 
+void movePenDown(bool down);
+
 class ProgramPlayer {
 public:
   ProgramPlayer(Controller& controller)
@@ -14,6 +16,7 @@ public:
     reset();
     return input.empty();
   }
+  void printProgram() const;
 
   void play() {
     paused_ = false;
@@ -50,15 +53,15 @@ public:
         break;
       case GCommand::PEN_DOWN:
         movePenDown_(true);
-        ++index_;
+        if (dwell(500)) ++index_;
         break;
       case GCommand::PEN_UP:
         movePenDown_(false);
+        if (dwell(500)) ++index_;
         ++index_;
         break;
       case GCommand::DWELL:
-        // For simplicity, skip timing logic for now
-        ++index_;
+        if (dwell(cmd.dwell_ms)) ++index_;
         break;
       case GCommand::HOME:
         controller_.setSetpoint(Eigen::Vector2d::Zero());
@@ -69,6 +72,16 @@ public:
         paused_ = true;
         break;
     }
+  }
+
+  // Returns true if finished
+  bool dwell(size_t duration_ms) {
+    if (dwell_time_start_ == static_cast<size_t>(-1)) {
+      dwell_time_start_ = millis();
+    }
+    bool ret = (millis() - dwell_time_start_) > duration_ms;
+    if (ret) dwell_time_start_ = static_cast<size_t>(-1);
+    return ret;
   }
 
   void movePenDown_(bool down) {
@@ -86,7 +99,38 @@ private:
   size_t index_;
   bool paused_;
   bool pen_was_down_;
+  size_t dwell_time_start_ = -1;
   size_t program_size_;
 };
+
+void ProgramPlayer::printProgram() const {
+  for (size_t i = 0; i < program_size_; ++i) {
+    const auto& cmd = program_.at(i);
+    switch (cmd.type) {
+      case GCommand::RAPID:
+        WebSerial.printf("%3u: RAPID   (%.2f, %.2f)\n", i, cmd.target(0), cmd.target(1));
+        break;
+      case GCommand::LINEAR:
+        WebSerial.printf("%3u: LINEAR  (%.2f, %.2f)\n", i, cmd.target(0), cmd.target(1));
+        break;
+      case GCommand::PEN_DOWN:
+        WebSerial.printf("%3u: PEN DOWN\n", i);
+        break;
+      case GCommand::PEN_UP:
+        WebSerial.printf("%3u: PEN UP\n", i);
+        break;
+      case GCommand::DWELL:
+        // For simplicity, skip timing logic for now
+        WebSerial.printf("%3u: DWELL   (%.2f)\n", i, cmd.dwell_ms);
+        break;
+      case GCommand::HOME:
+        WebSerial.printf("%3u: HOME\n", i);
+        break;
+      case GCommand::END:
+        WebSerial.printf("%3u: END\n", i);
+        break;
+    }
+  }
+}
 
 ProgramPlayer gcode_player{ controller };
