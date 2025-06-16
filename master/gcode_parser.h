@@ -14,32 +14,50 @@ constexpr size_t MAX_COMMANDS = 100;
 
 // Parsed representation of a G-code move
 struct GCommand {
-  enum Type : uint8_t { RAPID,
-                        LINEAR,
-                        PEN_UP,
-                        PEN_DOWN,
-                        DWELL,
-                        HOME,
-                        END } type;
+  enum Type : uint8_t {
+    RAPID,
+    LINEAR,
+    PEN_UP,
+    PEN_DOWN,
+    DWELL,
+    HOME,
+    END
+  } type;
   Eigen::Vector2d target;  // For RAPID/LINEAR
   double dwell_ms;         // For DWELL
 };
 
 class GCodeParser {
-public:
-  static size_t parse(std::string_view& input, std::array<GCommand, MAX_COMMANDS>& out_program) {
+ public:
+  static size_t parse(std::string_view& input,
+                      std::array<GCommand, MAX_COMMANDS>& out_program) {
+    size_t program_size = 0;
+    parse(input, out_program, program_size);
+    WebSerial.printf("Parsed %u gcode lines.\n", program_size);
+    if (program_size < MAX_COMMANDS) {
+      out_program[program_size++].type = GCommand::END;
+    } else {
+      WebSerial.printf(
+          "Ran out of gcode storage space!  Still %u characters remaining.\n",
+          input.size());
+    }
+    return program_size;
+  }
+  static size_t parse(std::string_view& input,
+                      std::array<GCommand, MAX_COMMANDS>& out_program,
+                      size_t& program_size) {
     trim(input);
-
-    size_t count = 0;
 
     bool cur_is_abs = true;
     Eigen::Vector2d cur_pos(0, 0);
 
-    while (!input.empty() && count < MAX_COMMANDS) {
-      auto endline = std::min(input.find('\n'), input.find('\\'));
+    while (!input.empty() && program_size < MAX_COMMANDS) {
+      auto endline = input.find_first_of("\n\\");
       std::string_view line = input.substr(0, endline);
-      if (endline == std::string_view::npos) input.remove_prefix(input.size());
-      else input.remove_prefix(endline + 1);
+      if (endline == std::string_view::npos)
+        input.remove_prefix(input.size());
+      else
+        input.remove_prefix(endline + 1);
 
       trimComment(line);
       trim(line);
@@ -47,24 +65,20 @@ public:
 
       GCommand cmd;
       if (!parseCmd(line, cur_is_abs, cur_pos, cmd)) continue;
-      out_program[count++] = cmd;
+      out_program[program_size++] = cmd;
     }
-    WebSerial.printf("Parsed %u gcode lines.\n", count);
-    if (count < MAX_COMMANDS) {
-      out_program[count++].type = GCommand::END;
-    } else {
-      WebSerial.printf("Ran out of gcode storage space!  Still %u characters remaining.\n", input.size());
-    }
-    return count;
+    return program_size;
   }
 
-private:
-  static bool parseCmd(std::string_view& line, bool& cur_is_abs, Eigen::Vector2d& cur_pos, GCommand& cmd) {
+ private:
+  static bool parseCmd(std::string_view& line, bool& cur_is_abs,
+                       Eigen::Vector2d& cur_pos, GCommand& cmd) {
     if (starts_with(line, "G0 ") || starts_with(line, "G1 ")) {
       cmd.type = line[1] == '0' ? GCommand::RAPID : GCommand::LINEAR;
       if (!parseMove(line.substr(3), cur_is_abs, cur_pos)) {
         WebSerial.print(F("Failed to parse gcode line:\n\t"));
-        WebSerial.write(reinterpret_cast<const uint8_t*>(line.data()), line.size());
+        WebSerial.write(reinterpret_cast<const uint8_t*>(line.data()),
+                        line.size());
         return false;
       } else {
         cmd.target = cur_pos;
@@ -73,9 +87,11 @@ private:
       cmd.type = GCommand::DWELL;
       line.remove_prefix(3);
       trimFront(line);
-      if (line.empty() || line.front() != 'P' || !parseNumbersNotInPlace(line.substr(1), cmd.dwell_ms)) {
+      if (line.empty() || line.front() != 'P' ||
+          !parseNumbersNotInPlace(line.substr(1), cmd.dwell_ms)) {
         WebSerial.print(F("Failed to parse gcode line:\n\t"));
-        WebSerial.write(reinterpret_cast<const uint8_t*>(line.data()), line.size());
+        WebSerial.write(reinterpret_cast<const uint8_t*>(line.data()),
+                        line.size());
         return false;
       }
     } else if (starts_with(line, "G28")) {
@@ -92,13 +108,15 @@ private:
       cmd.type = GCommand::PEN_UP;
     } else {
       WebSerial.print(F("Failed to parse gcode line:\n\t"));
-      WebSerial.write(reinterpret_cast<const uint8_t*>(line.data()), line.size());
+      WebSerial.write(reinterpret_cast<const uint8_t*>(line.data()),
+                      line.size());
       return false;
     }
     return true;
   }
 
-  static bool parseMove(std::string_view line, bool is_abs, Eigen::Vector2d& pos) {
+  static bool parseMove(std::string_view line, bool is_abs,
+                        Eigen::Vector2d& pos) {
     std::optional<double> x, y;
     trimFront(line);
     while (!line.empty()) {

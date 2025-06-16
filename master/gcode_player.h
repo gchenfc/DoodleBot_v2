@@ -4,26 +4,43 @@
 #include "gcode_parser.h"
 #include "motors.h"
 
+#define PEN_STATE_DELAY_MS 500
+
 void movePenDown(bool down);
 
 class ProgramPlayer {
-public:
+ public:
   ProgramPlayer(Controller& controller)
-    : controller_(controller), index_(0), paused_(false), pen_was_down_(false), program_size_(0) {}
+      : controller_(controller),
+        index_(0),
+        paused_(false),
+        pen_was_down_(false),
+        program_size_(0) {}
 
   bool loadProgram(std::string_view input) {
     program_size_ = GCodeParser::parse(input, program_);
     reset();
     return input.empty();
   }
+  void loadLine(std::string_view line) {
+    GCodeParser::parse(line, program_, program_size_);
+  }
+  void startUpload() {
+    disabled_for_upload_ = true;
+    program_size_ = 0;
+    WebSerial.println(F("Upload starting..."));
+    reset();
+  }
+  bool isUploading() const { return disabled_for_upload_; }
+  void endUpload() {
+    disabled_for_upload_ = false;
+    WebSerial.println(F("Upload finished, resetting program player."));
+    reset();
+  }
   void printProgram() const;
 
-  void play() {
-    paused_ = false;
-  }
-  void pause() {
-    paused_ = true;
-  }
+  void play() { paused_ = false; }
+  void pause() { paused_ = true; }
   void reset() {
     index_ = 0;
     paused_ = true;
@@ -31,21 +48,43 @@ public:
   }
 
   void update(const State& state) {
-    if (paused_ || index_ >= program_size_) return;
+    if (paused_ || disabled_for_upload_ || index_ >= program_size_) return;
 
     const auto& cmd = program_[index_];
     switch (cmd.type) {
-      case GCommand::RAPID:
-        // lift pen, move, restore pen
-        movePenDown(false);
-        controller_.setSetpoint(cmd.target);
-        if (controller_.done(state)) {
-          if (pen_was_down_) {
-            movePenDown(true);
+      case GCommand::RAPID: {  // lift pen, move, restore pen
+        bool advance = [this, &cmd, &state](int& state_) {
+          switch (state_) {
+            case -1:
+              return true;
+            case 0:
+              movePenDown(false);
+              return true;
+            case 1:
+              return (!pen_was_down_) || (PEN_STATE_DELAY_MS);
+            case 2:
+              controller_.setSetpoint(cmd.target);
+              return true;
+            case 3:
+              return controller_.done(state);
+            case 4:
+              if (pen_was_down_) movePenDown(true);
+              return true;
+            case 5:
+              return (!pen_was_down_) || dwell(PEN_STATE_DELAY_MS);
+            case 6:
+              ++index_;
+              state_ = -1;
+              return false;
+            default:
+              return false;  // Invalid state, do not advance
           }
-          ++index_;
+        }(state_);
+        if (advance) {
+          ++state_;
         }
         break;
+      }
       case GCommand::LINEAR:
         // move (leaving pen at whatever state it was at before this move)
         controller_.setSetpoint(cmd.target);
@@ -53,11 +92,11 @@ public:
         break;
       case GCommand::PEN_DOWN:
         movePenDown_(true);
-        if (dwell(500)) ++index_;
+        if (dwell(PEN_STATE_DELAY_MS)) ++index_;
         break;
       case GCommand::PEN_UP:
         movePenDown_(false);
-        if (dwell(500)) ++index_;
+        if (dwell(PEN_STATE_DELAY_MS)) ++index_;
         ++index_;
         break;
       case GCommand::DWELL:
@@ -89,18 +128,18 @@ public:
     pen_was_down_ = down;
   }
 
-  bool isFinished() const {
-    return index_ >= program_size_;
-  }
+  bool isFinished() const { return index_ >= program_size_; }
 
-private:
+ private:
   std::array<GCommand, MAX_COMMANDS> program_;
   Controller& controller_;
   size_t index_;
+  int state_ = -1;
   bool paused_;
   bool pen_was_down_;
   size_t dwell_time_start_ = -1;
   size_t program_size_;
+  bool disabled_for_upload_ = false;  // Used to disable execution during upload
 };
 
 void ProgramPlayer::printProgram() const {
@@ -108,10 +147,12 @@ void ProgramPlayer::printProgram() const {
     const auto& cmd = program_.at(i);
     switch (cmd.type) {
       case GCommand::RAPID:
-        WebSerial.printf("%3u: RAPID   (%.2f, %.2f)\n", i, cmd.target(0), cmd.target(1));
+        WebSerial.printf("%3u: RAPID   (%.2f, %.2f)\n", i, cmd.target(0),
+                         cmd.target(1));
         break;
       case GCommand::LINEAR:
-        WebSerial.printf("%3u: LINEAR  (%.2f, %.2f)\n", i, cmd.target(0), cmd.target(1));
+        WebSerial.printf("%3u: LINEAR  (%.2f, %.2f)\n", i, cmd.target(0),
+                         cmd.target(1));
         break;
       case GCommand::PEN_DOWN:
         WebSerial.printf("%3u: PEN DOWN\n", i);
@@ -133,4 +174,4 @@ void ProgramPlayer::printProgram() const {
   }
 }
 
-ProgramPlayer gcode_player{ controller };
+ProgramPlayer gcode_player{controller};

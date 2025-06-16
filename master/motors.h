@@ -15,7 +15,7 @@ Metro servo_timer(100);
 Metro motor_report_timer(5000);
 
 bool motors_disabled = false;
-int servo_target = 180;
+int servo_target = 160;
 
 AccelStepper stepper1(AccelStepper::FULL4WIRE, D4, D2, D3, D1);
 AccelStepper stepper2(AccelStepper::FULL4WIRE, D8, D6, D7, D5);
@@ -72,5 +72,5 @@ void applyDq(int64_t d1, int64_t d2) {
 }
 
 void movePenDown(bool down) {
-  servo_target = down ? 160 : 0;
+  servo_target = down ? 0 : 160;
 }

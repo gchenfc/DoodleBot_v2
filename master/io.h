@@ -6,7 +6,6 @@
 #include <cmath>
 #include <string_view>
 
-#include <ESPAsyncWebServer.h>
 #include <WebSerial.h>
 
 #include "Metro.h"
@@ -16,8 +15,6 @@
 #include "string_parsing.h"
 #include "gcode_player.h"
 
-AsyncWebServer server(80);
-
 Metro io_timer(15000);
 
 void recvMsg(uint8_t* data, size_t len);
@@ -26,12 +23,13 @@ void setupIo() {
   // WebSerial is accessible at "<IP Address>/webserial" in browser
   WebSerial.begin(&server);
   WebSerial.onMessage(recvMsg);
-  server.begin();
 }
 
 void updateIo() {
   if (io_timer.check()) {
-    WebSerial.printf("IP address: %s, Uptime: %lums,\tFree heap: %u\n", WiFi.localIP().toString().c_str(), millis(), ESP.getFreeHeap());
+    WebSerial.printf("IP address: %s, Uptime: %lums,\tFree heap: %u\n",
+                     WiFi.localIP().toString().c_str(), millis(),
+                     ESP.getFreeHeap());
   }
 }
 
@@ -55,7 +53,8 @@ void recvMsg(uint8_t* data, size_t len) {
     std::string_view line = input.substr(0, split_pos);
     if (!parseLine(line)) {
       WebSerial.print(F("Failed to parse line: "));
-      WebSerial.write(reinterpret_cast<const uint8_t*>(line.data()), line.size());
+      WebSerial.write(reinterpret_cast<const uint8_t*>(line.data()),
+                      line.size());
     }
 
     if (split_pos == std::string_view::npos) break;
@@ -75,46 +74,47 @@ bool parseLine(std::string_view line) {
     case 'P':
       return parseP(line);
     case 'S':  // Set motor angles to R,L,Servo
-      {
-        long s1_target, s2_target;
-        bool ret = parseNumbers(line, s1_target, s2_target, servo_target);
-        if (ret) {
-          stepper1.moveTo(s1_target);
-          stepper2.moveTo(s2_target);
-        }
-        return ret;
+    {
+      long s1_target, s2_target;
+      bool ret = parseNumbers(line, s1_target, s2_target, servo_target);
+      if (ret) {
+        stepper1.moveTo(s1_target);
+        stepper2.moveTo(s2_target);
       }
+      return ret;
+    }
     case 'u':  // pen up
       movePenDown(false);
       return true;
     case 'd':  // pen down
       movePenDown(true);
       return true;
-    case 'R':
+    case 'H':  // home
       estimator.reset();
+      controller.reset();
+      return true;
+    case 'R':  // reset
       controller.reset();
       gcode_player.reset();
       return true;
-    case 'm':
-      {
-        double dx, dy;
-        if (parseNumbers(line, dx, dy)) {
-          WebSerial.printf("Calling move relative on %.2f, %.2f\n", dx, dy);
-          controller.setSetpoint(controller.setpoint() + Eigen::Vector2d(dx, dy));
-          return true;
-        }
-        return false;
+    case 'm': {
+      double dx, dy;
+      if (parseNumbers(line, dx, dy)) {
+        WebSerial.printf("Calling move relative on %.2f, %.2f\n", dx, dy);
+        controller.setSetpoint(controller.setpoint() + Eigen::Vector2d(dx, dy));
+        return true;
       }
-    case 'M':
-      {
-        Eigen::Vector2d xy;
-        if (parseNumbers(line, xy(0), xy(1))) {
-          WebSerial.printf("Calling move absolute on %.2f, %.2f\n", xy(0), xy(1));
-          controller.setSetpoint(xy);
-          return true;
-        }
-        return false;
+      return false;
+    }
+    case 'M': {
+      Eigen::Vector2d xy;
+      if (parseNumbers(line, xy(0), xy(1))) {
+        WebSerial.printf("Calling move absolute on %.2f, %.2f\n", xy(0), xy(1));
+        controller.setSetpoint(xy);
+        return true;
       }
+      return false;
+    }
     case '>':
       gcode_player.play();
       return true;
@@ -131,7 +131,6 @@ bool parseLine(std::string_view line) {
   }
   return false;
 }
-
 
 bool parseP(const std::string_view& input) {
   if (!input.empty()) {
