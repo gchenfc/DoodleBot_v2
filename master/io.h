@@ -127,6 +127,7 @@ bool parseLine(std::string_view line) {
     case '?':
       estimator.print();
       controller.print();
+      gcode_player.print();
       return true;
   }
   return false;

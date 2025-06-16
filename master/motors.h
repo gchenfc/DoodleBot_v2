@@ -10,12 +10,15 @@
 #include "gcode_player.h"
 #include "Metro.h"
 
+#define SERVO_UP_ANGLE 160
+#define SERVO_DOWN_ANGLE 60
+
 Metro motor_timer(50);
 Metro servo_timer(100);
 Metro motor_report_timer(5000);
 
 bool motors_disabled = false;
-int servo_target = 160;
+int servo_target = SERVO_UP_ANGLE;
 
 AccelStepper stepper1(AccelStepper::FULL4WIRE, D4, D2, D3, D1);
 AccelStepper stepper2(AccelStepper::FULL4WIRE, D8, D6, D7, D5);
@@ -37,17 +40,17 @@ void setupMotors() {
 }
 
 void updateMotors() {
-  // step one revolution  in one direction:
+  // Estimate
+  const int64_t cur_stepper1 = stepper1.currentPosition();
+  const int64_t cur_stepper2 = stepper2.currentPosition();
+  estimator.update(Eigen::Vector2d(cur_stepper1, cur_stepper2) *
+                   UNITS_PER_STEP);
+  // Control
   if (motor_timer.check() && !motors_disabled) {
-    // if (stepper1.distanceToGo() > 10) return;
-    // if (stepper2.distanceToGo() > 10) return;
-    const int64_t cur_stepper1 = stepper1.currentPosition();
-    const int64_t cur_stepper2 = stepper2.currentPosition();
-
-    estimator.update(Eigen::Vector2d(cur_stepper1, cur_stepper2) * UNITS_PER_STEP);
     gcode_player.update(estimator.state());
     if (!controller.done(estimator.state())) {
-      Eigen::Vector2d dq = controller.getAction(estimator.state()) * STEPS_PER_UNIT;
+      Eigen::Vector2d dq =
+          controller.getAction(estimator.state()) * STEPS_PER_UNIT;
       // estimator.print();
       // controller.print();
       applyDq(dq(0), dq(1));
@@ -72,5 +75,5 @@ void applyDq(int64_t d1, int64_t d2) {
 }
 
 void movePenDown(bool down) {
-  servo_target = down ? 0 : 160;
+  servo_target = down ? SERVO_DOWN_ANGLE : SERVO_UP_ANGLE;
 }

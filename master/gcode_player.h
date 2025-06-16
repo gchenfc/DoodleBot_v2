@@ -37,7 +37,31 @@ class ProgramPlayer {
     WebSerial.println(F("Upload finished, resetting program player."));
     reset();
   }
+  size_t printLine(size_t i, char* buf, size_t max_chars) const;
   void printProgram() const;
+  size_t printProgram(char* buf, size_t max_chars, size_t index) const;
+  void print() const {
+    WebSerial.printf(R"(
+GCodePlayer state:
+  program size: %zu
+  paused: %d
+  index: %zu
+  state: %d
+  disabled_for_upload: %d
+  pen_was_down: %d
+  dwell_time_start: %zu
+  Current program line:
+)",
+                     program_size_, paused_, index_, state_,
+                     disabled_for_upload_, pen_was_down_, dwell_time_start_);
+    if (index_ >= 0 && index_ < program_size_) {
+      char buf[128];
+      size_t cmd_written = printLine(index_, buf, sizeof(buf));
+      WebSerial.write(reinterpret_cast<uint8_t*>(buf), cmd_written);
+    } else {
+      WebSerial.println("No current program line (index out of bounds).");
+    }
+  }
 
   void play() { paused_ = false; }
   void pause() { paused_ = true; }
@@ -142,36 +166,98 @@ class ProgramPlayer {
   bool disabled_for_upload_ = false;  // Used to disable execution during upload
 };
 
+size_t ProgramPlayer::printLine(size_t i, char* buf, size_t max_chars) const {
+  const auto& cmd = program_.at(i);
+  switch (cmd.type) {
+    case GCommand::RAPID:
+      return snprintf(buf, max_chars, "%3u: RAPID   (%.2f, %.2f)\n", i,
+                      cmd.target(0), cmd.target(1));
+      break;
+    case GCommand::LINEAR:
+      return snprintf(buf, max_chars, "%3u: LINEAR  (%.2f, %.2f)\n", i,
+                      cmd.target(0), cmd.target(1));
+      break;
+    case GCommand::PEN_DOWN:
+      return snprintf(buf, max_chars, "%3u: PEN DOWN\n", i);
+      break;
+    case GCommand::PEN_UP:
+      return snprintf(buf, max_chars, "%3u: PEN UP\n", i);
+      break;
+    case GCommand::DWELL:
+      // For simplicity, skip timing logic for now
+      return snprintf(buf, max_chars, "%3u: DWELL   (%.2f)\n", i, cmd.dwell_ms);
+      break;
+    case GCommand::HOME:
+      return snprintf(buf, max_chars, "%3u: HOME\n", i);
+      break;
+    case GCommand::END:
+      return snprintf(buf, max_chars, "%3u: END\n", i);
+      break;
+  }
+  return 0;
+}
+
 void ProgramPlayer::printProgram() const {
+  char buf[128];
   for (size_t i = 0; i < program_size_; ++i) {
-    const auto& cmd = program_.at(i);
-    switch (cmd.type) {
-      case GCommand::RAPID:
-        WebSerial.printf("%3u: RAPID   (%.2f, %.2f)\n", i, cmd.target(0),
-                         cmd.target(1));
+    size_t cmd_written = printLine(i, buf, sizeof(buf));
+    WebSerial.write(reinterpret_cast<uint8_t*>(buf), cmd_written);
+  }
+}
+
+// Given program string `str`, populate `buf` with `str[index:index+max_chars]`
+size_t ProgramPlayer::printProgram(char* buf, size_t max_chars,
+                                   size_t index) const {
+  // A "cache" of where we previously left off.
+  static size_t prev_byte = 0;
+  static size_t start_cmd_index = 0;
+
+  char tmp_buf[128];
+  char* original_buf = buf;  // for counting how much we wrote
+
+  // If start at the beginning, we can reset our "cache" of where we are.
+  if (index == 0) {
+    prev_byte = 0;
+    start_cmd_index = 0;
+  }
+
+  // If our "cache" is invalid, we need to re-scan from the start.
+  if (index != prev_byte) {
+    for (start_cmd_index = 0; start_cmd_index < program_size_;
+         ++start_cmd_index) {
+      size_t cmd_written = printLine(start_cmd_index, tmp_buf, sizeof(tmp_buf));
+      if (cmd_written > sizeof(tmp_buf)) {
+        // Failure.  Just return.
+        WebSerial.printf(
+            "Failed to print program, command %zu too long for buffer (%zu "
+            "bytes)\n",
+            start_cmd_index, cmd_written);
+        return 0;
+      }
+      if (prev_byte + cmd_written > index) {
+        // We got truncated.  Here is where we start.
+        // start_cmd_index is already set.
         break;
-      case GCommand::LINEAR:
-        WebSerial.printf("%3u: LINEAR  (%.2f, %.2f)\n", i, cmd.target(0),
-                         cmd.target(1));
-        break;
-      case GCommand::PEN_DOWN:
-        WebSerial.printf("%3u: PEN DOWN\n", i);
-        break;
-      case GCommand::PEN_UP:
-        WebSerial.printf("%3u: PEN UP\n", i);
-        break;
-      case GCommand::DWELL:
-        // For simplicity, skip timing logic for now
-        WebSerial.printf("%3u: DWELL   (%.2f)\n", i, cmd.dwell_ms);
-        break;
-      case GCommand::HOME:
-        WebSerial.printf("%3u: HOME\n", i);
-        break;
-      case GCommand::END:
-        WebSerial.printf("%3u: END\n", i);
-        break;
+      }
+      prev_byte += cmd_written;
     }
   }
+
+  // Now print the rest of the program.
+  for (; start_cmd_index < program_size_; ++start_cmd_index) {
+    size_t cmd_written = printLine(start_cmd_index, buf, max_chars);
+    if (cmd_written > max_chars) {
+      // we got truncated.  Just pretend this entire line never got printed.
+      prev_byte += buf - original_buf;
+      return buf - original_buf;
+    }
+    buf += cmd_written;
+    max_chars -= cmd_written;
+  }
+
+  // We finished printing the program.
+  prev_byte += buf - original_buf;
+  return buf - original_buf;
 }
 
 ProgramPlayer gcode_player{controller};

@@ -4,6 +4,7 @@
 
 void handleFileUpload(AsyncWebServerRequest* request, String filename,
                       size_t index, uint8_t* data, size_t len, bool final);
+void handlePrintGcode(AsyncWebServerRequest* request);
 
 static const auto kUploadPage PROGMEM = R"rawliteral(
 <!DOCTYPE html>
@@ -105,8 +106,7 @@ void setupUi() {
   });
   // post to the upload page
   server.on(
-      "/upload", HTTP_POST, [](AsyncWebServerRequest* request) {},
-      handleFileUpload);
+      "/upload", HTTP_POST, [](AsyncWebServerRequest*) {}, handleFileUpload);
   server.on("/testing", HTTP_GET, [](AsyncWebServerRequest* request) {
     request->redirect("/success.html");
     WebSerial.println("Testing endpoint hit, redirecting to success page.");
@@ -114,6 +114,7 @@ void setupUi() {
   server.on("/success.html", HTTP_GET, [](AsyncWebServerRequest* request) {
     request->send(200, "text/html", kSuccessPage);
   });
+  server.on("/print", HTTP_GET, handlePrintGcode);
 }
 
 void updateUi() {}
@@ -154,4 +155,16 @@ void handleFileUpload(AsyncWebServerRequest* request, String filename,
 
   WebSerial.printf("Finished Received chunk %zu of %zu bytes.  Final? %d\n",
                    index, len, final);
+}
+
+void handlePrintGcode(AsyncWebServerRequest* request) {
+  auto* response = request->beginChunkedResponse(
+      "text/plain",
+      [&](uint8_t* buffer, size_t maxLen, size_t index) -> size_t {
+        return gcode_player.printProgram(reinterpret_cast<char*>(buffer),
+                                         maxLen, index);
+      });
+  // Don't download as a file.  Instead, display in browser:
+  response->addHeader("X-Content-Type-Options", "nosniff");
+  request->send(response);
 }

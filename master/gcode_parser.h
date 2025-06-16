@@ -10,7 +10,7 @@
 #include "controller.h"
 #include "string_parsing.h"
 
-constexpr size_t MAX_COMMANDS = 100;
+constexpr size_t MAX_COMMANDS = 500;
 
 // Parsed representation of a G-code move
 struct GCommand {
@@ -36,10 +36,6 @@ class GCodeParser {
     WebSerial.printf("Parsed %u gcode lines.\n", program_size);
     if (program_size < MAX_COMMANDS) {
       out_program[program_size++].type = GCommand::END;
-    } else {
-      WebSerial.printf(
-          "Ran out of gcode storage space!  Still %u characters remaining.\n",
-          input.size());
     }
     return program_size;
   }
@@ -66,6 +62,11 @@ class GCodeParser {
       GCommand cmd;
       if (!parseCmd(line, cur_is_abs, cur_pos, cmd)) continue;
       out_program[program_size++] = cmd;
+    }
+    if (program_size >= MAX_COMMANDS) {
+      WebSerial.printf(
+          "Ran out of gcode storage space!  Still %u characters remaining.\n",
+          input.size());
     }
     return program_size;
   }
@@ -98,8 +99,10 @@ class GCodeParser {
       cmd.type = GCommand::HOME;
     } else if (starts_with(line, "G90")) {
       cur_is_abs = true;
+      return false;  // this doesn't actually generate a command
     } else if (starts_with(line, "G91")) {
       cur_is_abs = false;
+      return false;  // this doesn't actually generate a command
     } else if (starts_with(line, "M2") || starts_with(line, "M30")) {
       cmd.type = GCommand::END;
     } else if (starts_with(line, "M3")) {
@@ -118,6 +121,7 @@ class GCodeParser {
   static bool parseMove(std::string_view line, bool is_abs,
                         Eigen::Vector2d& pos) {
     std::optional<double> x, y;
+    std::optional<double> dummy;
     trimFront(line);
     while (!line.empty()) {
       std::optional<double>* target;
@@ -129,6 +133,10 @@ class GCodeParser {
         case 'y':
         case 'Y':
           target = &y;
+          break;
+        case 'f':
+        case 'F':
+          target = &dummy;  // Feed rate, not used
           break;
         default:
           return false;

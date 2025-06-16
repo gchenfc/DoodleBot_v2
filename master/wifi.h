@@ -17,6 +17,7 @@ AsyncWebServer server(80);
 
 void setupWifi() {
   WiFi.mode(WIFI_STA);
+  WiFi.hostname("doodlebot");
   WiFi.begin(ssid, password);
 
   while (WiFi.waitForConnectResult() != WL_CONNECTED) {
